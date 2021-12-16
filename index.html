@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bingo</title>
+    <style>
+
+*, ::before, ::after { box-sizing: border-box; }
+
+html {
+  font-family: sans-serif;
+  user-select: none;  /* テキストが反転されるとダサく感じるので防いでおく */
+}
+
+.wrapper {
+  margin: 0 auto;
+  width: 30rem;  /* テキトーな幅で中央寄せにしとく */
+  text-align: center;
+}
+
+#id {
+  width: 8rem;
+}
+
+#generate {
+  cursor: pointer;  /* ボタンはポインタになるのが個人的好み */
+}
+
+/* 初期表示時は非表示にする */
+#bingo,
+#opened-numbers {
+  display: none;
+}
+
+/* ビンゴ表 (table) */
+#bingo {
+  margin: 0 auto;
+  border-collapse: collapse;
+}
+
+/* ビンゴ表のマス */
+#bingo td {
+  border: 1px solid #999;
+  padding: .5rem;
+  text-align: center;
+  vertical-align: middle;
+  cursor: pointer;
+}
+#bingo td:hover {
+  background: #ffc;
+}
+
+/* 開いたマス */
+#bingo td[data-opened="true"] {
+  background: #fcc;
+}
+#bingo td[data-opened="true"]:hover {
+  background: #cfc;
+}
+
+/* 中央のマス */
+#bingo #center {
+  color: #fff;
+  background: #009;
+}
+
+/* 開いた番号一覧 */
+#opened-numbers {
+  word-break: break-all;
+}
+/* 開いた番号が一つもない時 */
+#opened-numbers:empty::before {
+  content: "-";
+}
+
+    </style>
+    <script>
+
+/** 定数 */
+const constants = (() => {
+  const constants = {};
+  /** 1列・1行のマスの数 */
+  constants.gridsPerLine = 5;
+  /** 5列・5行で 25 マス作る */
+  constants.allGrids = constants.gridsPerLine * constants.gridsPerLine;
+  /** 中央マスの Index */
+  constants.centerGrid = (constants.gridsPerLine - 1) / 2;
+  return constants;
+})();
+
+/** シード値を指定できる乱数生成器 : https://sbfl.net/blog/2017/06/01/javascript-reproducible-random/ */
+class Random {
+  /**
+   * コンストラクタ
+   * 
+   * @param {number} seed シード値
+   */
+  constructor(seed = 1) {
+    this.x = 123456789;
+    this.y = 362436069;
+    this.z = 521288629;
+    this.w = seed;
+  }
+  
+  /**
+   * XorShift
+   * 
+   * @return {number} 乱数
+   */
+  next() {
+    const t = this.x ^ (this.x << 11);
+    this.x = this.y;
+    this.y = this.z;
+    this.z = this.w;
+    return this.w = (this.w ^ (this.w >>> 19)) ^ (t ^ (t >>> 8)); 
+  }
+  
+  /**
+   * min 以上 max 以下の乱数を生成する
+   * 
+   * @param {number} min 最小値
+   * @param {number} max 最大値
+   * @return {number} 乱数値
+   */
+  nextInt(min = 1, max = 99) {
+    const r = Math.abs(this.next());
+    return min + (r % (max + 1 - min));
+  }
+}
+
+/**
+ * アルファベットを数字に変換する
+ * 
+ * @param {string} value アルファベット込みの文字列
+ * @return {string} アルファベットを数字に変換した文字列
+ */
+function alphabetToNumeric(value) {
+  value = value.toUpperCase();
+  const alphabets = new Array(26).fill(1).map((_, i) => String.fromCharCode(65 + i));
+  const replaceToAlphabetsIndex = match => alphabets.findIndex(alphabet => alphabet === match) + 1;  // A = 1・Z = 26
+  return value.replace(/[A-Z]/gu, replaceToAlphabetsIndex);
+}
+
+/**
+ * ビンゴに使用する数字の配列を作る
+ * 
+ * @param {number} seed シード値
+ * @return {Array<number>} 数字の配列・マス目の数分
+ */
+function generateNumbers(seed) {
+  const random = new Random(seed);
+  const numbers = [];
+  while(numbers.length !== constants.allGrids) {
+    const next = random.nextInt();
+    if(!numbers.includes(next)) numbers.push(next);
+  }
+  return numbers;
+}
+
+/**
+ * ビンゴ表に番号を入れる
+ * 
+ * @param {Array<number>} numbers 番号の配列
+ */
+function generateBingoCard(numbers) {
+  for(let row = 0; row < constants.gridsPerLine; row++) {
+    for(let col = 0; col < constants.gridsPerLine; col++) {
+      if(row === constants.centerGrid && col === constants.centerGrid) continue;  // 中央
+      const targetElement = document.querySelector(`#bingo [data-row="${row}"][data-col="${col}"]`);
+      targetElement.innerHTML = numbers[(row * constants.gridsPerLine) + col];
+      targetElement.removeAttribute('data-opened');  // マスの押下状態をリセットしておく
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const idElement = document.getElementById('id');
+  const bingoElement = document.getElementById('bingo');
+  const openedNumbersElement = document.getElementById('opened-numbers');
+  
+  /** ビンゴ表と開いた番号一覧の要素を非表示にする */
+  const hideBingoElements = () => bingoElement.style.display = openedNumbersElement.style.display = 'none';
+  
+  // 開いた番号を保持する配列
+  // TODO : ID とこの配列の値をセットで LocalStorage に保持しておけばレジュームできる
+  const openedNumbers = [];
+  
+  // 「Generate」ボタン押下時 : ビンゴカードを生成する
+  document.getElementById('generate').addEventListener('click', () => {
+    const id = idElement.value.trim();
+    if(id === '') {
+      hideBingoElements();
+      return alert('ID を入力してね');
+    }
+    if(id.match(/[^0-9a-z]/gi)) {
+      hideBingoElements();
+      return alert('ID は半角英数字のみで入力してね');
+    }
+    idElement.value = id;  // Trim した値を入れておく
+    
+    const seed = alphabetToNumeric(id);  // ID からシード値を作る
+    const numbers = generateNumbers(seed);  // シード値を元に番号の配列を作る
+    generateBingoCard(numbers);  // 番号をビンゴ表に埋めていく
+    openedNumbers.splice(0);  // 開いた番号を保持する配列をリセットする
+    openedNumbersElement.innerText = '';  // 初期化
+    bingoElement.style.display = 'table';  // 要素を表示する
+    openedNumbersElement.style.display = 'block';
+  });
+  
+  // ビンゴカードの各番号の押下時
+  bingo.addEventListener('click', event => {
+    const rawRow = event?.srcElement.dataset.row;  // Optional Chaining を認識しないブラウザは知らん
+    const rawCol = event?.srcElement.dataset.col;
+    if(rawRow == null || rawCol == null) return;  // Do Nothing
+    
+    const row = Number(rawRow);
+    const col = Number(rawCol);
+    if(row === constants.centerGrid && col === constants.centerGrid) return;  // 中央マスでは何もしない
+    
+    const targetElement = document.querySelector(`#bingo [data-row="${row}"][data-col="${col}"]`);
+    const targetNumber = Number(targetElement.innerText.trim());
+    // 対象の番号セルを開く or 閉じ直す
+    if(targetElement.dataset.opened) {
+      targetElement.removeAttribute('data-opened');
+      const targetIndex = openedNumbers.findIndex(openedNumber => openedNumber === targetNumber);
+      openedNumbers.splice(targetIndex, 1);
+    }
+    else {
+      targetElement.dataset.opened = 'true';
+      openedNumbers.push(targetNumber);
+    }
+    openedNumbersElement.innerText = openedNumbers;  // 開いた番号一覧を画面表示する
+    
+    // TODO : ビンゴが揃ったことを検知して何か出すとかしたい
+  });
+});
+
+    </script>
+  </head>
+  <body>
+
+<div class="wrapper">
+  <p>
+    <input type="text" id="id" value="" placeholder="ID">
+    <button type="button" id="generate">Generate</button>
+  </p>
+  <!-- TODO : JS 側で生成させた方がマスの数を変更しやすいな -->
+  <table id="bingo">
+    <tbody>
+      <tr>
+        <td data-row="0" data-col="0"></td>
+        <td data-row="0" data-col="1"></td>
+        <td data-row="0" data-col="2"></td>
+        <td data-row="0" data-col="3"></td>
+        <td data-row="0" data-col="4"></td>
+      </tr>
+      <tr>
+        <td data-row="1" data-col="0"></td>
+        <td data-row="1" data-col="1"></td>
+        <td data-row="1" data-col="2"></td>
+        <td data-row="1" data-col="3"></td>
+        <td data-row="1" data-col="4"></td>
+      </tr>
+      <tr>
+        <td data-row="2" data-col="0"></td>
+        <td data-row="2" data-col="1"></td>
+        <td data-row="2" data-col="2" id="center" data-opened="true">★</td>
+        <td data-row="2" data-col="3"></td>
+        <td data-row="2" data-col="4"></td>
+      </tr>
+      <tr>
+        <td data-row="3" data-col="0"></td>
+        <td data-row="3" data-col="1"></td>
+        <td data-row="3" data-col="2"></td>
+        <td data-row="3" data-col="3"></td>
+        <td data-row="3" data-col="4"></td>
+      </tr>
+      <tr>
+        <td data-row="4" data-col="0"></td>
+        <td data-row="4" data-col="1"></td>
+        <td data-row="4" data-col="2"></td>
+        <td data-row="4" data-col="3"></td>
+        <td data-row="4" data-col="4"></td>
+      </tr>
+    </tbody>
+  </table>
+  <p id="opened-numbers"></p>
+</div>
+
+  </body>
+</html>
