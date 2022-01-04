@@ -1,6 +1,6 @@
 # Bingo
 
-ビンゴカードを Vanilla JS で作ってみた。
+ビンゴカードを Vanilla JS で作ってみました。
 
 - [デモページ](https://mkrydik.github.io/bingo)
 
